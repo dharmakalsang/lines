@@ -1,143 +1,129 @@
 //+------------------------------------------------------------------+
 //|                                                       QL_Bold2.mq4 |
 //|                            MT4 QuickLine Suite v1.0                |
-//|                       - Minor S/R line (M5) -                      |
 //+------------------------------------------------------------------+
 #property copyright   "QuickLine Suite"
 #property link        ""
-#property version     "1.10"
+#property version     "1.20"
 #property description "QL_Bold2 - Minor Support/Resistance line (Solid, Width 2)"
-#property description "Drop on chart, line appears at clicked price."
+#property description "Drop on chart -> line appears at clicked price."
 #property description "Color auto-switches by Bid position."
 #property description "Length = BaseLength * throwCount * ScaleMultiplier."
 #property description "LengthMode lets you measure in Bars / Sec / Min / Hour / Day"
 #property description "so the same line width looks the same on M1..D1."
+#property description "Counter resets when you Remove the script from the chart."
 #property strict
 
 //+------------------------------------------------------------------+
 //| Engine: shared across all QL_*.mq4 scripts.                      |
-//| Per-script differences:                                          |
-//|   - STYLE: STYLE_SOLID                                           |
-//|   - WIDTH: 2                                                     |
-//|   - Default ColorAbove / ColorBelow (editable from Inputs).      |
+//| Per-script differences:                                           |
+//|   - STYLE                                                       |
+//|   - WIDTH                                                       |
+//|   - Default ColorAbove / ColorBelow                             |
 //+------------------------------------------------------------------+
 
-//+------------------------------------------------------------------+
-//| Length mode enum.                                                |
-//+------------------------------------------------------------------+
 enum ENUM_QL_LENGTH_MODE
   {
-   MODE_BARS  = 0,   // Candles (raw bar count, like v1.0)
-   MODE_SECS  = 1,   // Seconds
-   MODE_MINS  = 2,   // Minutes
-   MODE_HOURS = 3,   // Hours
-   MODE_DAYS  = 4,   // Days
+   MODE_BARS  = 0,
+   MODE_SECS  = 1,
+   MODE_MINS  = 2,
+   MODE_HOURS = 3,
+   MODE_DAYS  = 4,
   };
 
-//+------------------------------------------------------------------+
-//| Input Properties                                                 |
-//+------------------------------------------------------------------+
-input int              BaseLength      = 30;     // BaseLength (per drop, see LengthMode)
-input ENUM_QL_LENGTH_MODE LengthMode    = MODE_BARS; // Unit of BaseLength
-input int              ScaleMultiplier = 1;      // 1=normal, 2=double, 3=triple (per drop)
-input color            ColorAbove      = clrDeepSkyBlue;  // Color when dropped ABOVE Bid
-input color            ColorBelow      = clrOrange;       // Color when dropped BELOW Bid
-input bool             Selectable      = true;    // Allow line to be dragged
-input bool             Back            = false;   // Send to back
-input bool             Hidden          = false;   // Hide in object list
-input bool             Ray             = false;   // Ray OFF (rule #10)
+input int              BaseLength      = 10;
+input ENUM_QL_LENGTH_MODE LengthMode    = MODE_BARS;
+input int              ScaleMultiplier = 1;
+input color            ColorAbove      = clrDeepSkyBlue;
+input color            ColorBelow      = clrOrange;
+input bool             Selectable      = true;
+input bool             Back            = false;
+input bool             Hidden          = false;
+input bool             Ray             = false;
+input bool             ResetOnRemove   = true;
 
-//+------------------------------------------------------------------+
-//| Internal constants                                               |
-//+------------------------------------------------------------------+
-const int    STYLE       = STYLE_SOLID;  // QL_Bold2 = Solid
-const int    WIDTH       = 2;            // QL_Bold2 = Width 2
-const string PREFIX      = "QL_Bold2_";  // Object name prefix
+const int    STYLE       = STYLE_SOLID;
+const int    WIDTH       = 2;
+const string PREFIX      = "QL_Bold2_";
 
-//+------------------------------------------------------------------+
-//| Per-script "throw" counter (rule #9).                            |
-//+------------------------------------------------------------------+
 string GvCounterName()
   {
-   return(PREFIX + "counter");
+   return(PREFIX + "counter_" + IntegerToString(ChartID()));
   }
 
-int NextCounter()
+int CurrentCounter()
   {
    string gv = GvCounterName();
-   int n = 0;
-   if(GlobalVariableCheck(gv))
-      n = (int)GlobalVariableGet(gv);
-   n = n + 1;
-   GlobalVariableSet(gv, (double)n);
-   return(n);
+   if(GlobalVariableCheck(gv)) return((int)GlobalVariableGet(gv));
+   return(0);
   }
 
-//+------------------------------------------------------------------+
-//| Build a unique object name (rule #11).                           |
-//+------------------------------------------------------------------+
-string MakeName()
+int GetNextCounter()
+  {
+   string gv = GvCounterName();
+   int value = CurrentCounter() + 1;
+   GlobalVariableSet(gv, (double)value);
+   return(value);
+  }
+
+void ResetCounter()
+  {
+   string gv = GvCounterName();
+   if(GlobalVariableCheck(gv)) GlobalVariableDel(gv);
+  }
+
+string MakeName(int throwCount)
   {
    string base = PREFIX + TimeToString(TimeLocal(), TIME_DATE | TIME_SECONDS);
    StringReplace(base, " ", "_");
    StringReplace(base, ":", "");
    StringReplace(base, ".", "");
-   return(base);
+   return(base + "_" + IntegerToString(ChartID()) + "_" + IntegerToString(throwCount) + "_" + IntegerToString(GetTickCount()));
   }
 
-//+------------------------------------------------------------------+
-//| Convert desired time-span to a bar offset.                       |
-//+------------------------------------------------------------------+
-int BarsForSeconds(int targetSeconds)
+int BarsForSeconds(int targetSeconds, int fromBar)
   {
-   if(targetSeconds <= 0)
-      return(0);
-
-   datetime t0 = iTime(Symbol(), Period(), 0);
+   if(targetSeconds <= 0 || fromBar < 0) return(1);
    int maxBars = Bars(Symbol(), Period());
-   if(maxBars <= 0)
-      return(0);
+   if(maxBars <= 0 || fromBar >= maxBars) return(1);
 
-   for(int i = 1; i < maxBars; i++)
+   datetime tBase = iTime(Symbol(), Period(), fromBar);
+   if(tBase == 0) return(1);
+
+   for(int i = fromBar + 1; i < maxBars; i++)
      {
       datetime tBar = iTime(Symbol(), Period(), i);
-      if(tBar == 0)
-         break;
-      if((long)(t0 - tBar) >= targetSeconds)
-         return(i);
+      if(tBar == 0) break;
+      if((long)(tBase - tBar) >= targetSeconds) return(i - fromBar);
      }
-   return(maxBars - 1);
+
+   return(maxBars - 1 - fromBar);
   }
 
-//+------------------------------------------------------------------+
-//| Compute the left-bar index for the line.                         |
-//+------------------------------------------------------------------+
-int ComputeLeftBar()
+int ComputeBarCount(int dropBar, int throwCount)
   {
-   int throwCount    = NextCounter();
-   long multiplier   = (long)ScaleMultiplier;
-   if(multiplier < 1)  multiplier = 1;
+   long multiplier = (long)ScaleMultiplier;
+   if(multiplier < 1) multiplier = 1;
    if(multiplier > 10) multiplier = 10;
 
    long raw = (long)BaseLength * (long)throwCount * multiplier;
    if(raw < 1) raw = 1;
 
-   int leftBar = 0;
+   int barCount = 1;
    switch(LengthMode)
      {
-      case MODE_BARS:  leftBar = (int)raw;                          break;
-      case MODE_SECS:  leftBar = BarsForSeconds((int)raw);          break;
-      case MODE_MINS:  leftBar = BarsForSeconds((int)raw * 60);     break;
-      case MODE_HOURS: leftBar = BarsForSeconds((int)raw * 3600);  break;
-      case MODE_DAYS:  leftBar = BarsForSeconds((int)raw * 86400);  break;
+      case MODE_BARS:  barCount = (int)raw; break;
+      case MODE_SECS:  barCount = BarsForSeconds((int)raw, dropBar); break;
+      case MODE_MINS:  barCount = BarsForSeconds((int)raw * 60, dropBar); break;
+      case MODE_HOURS: barCount = BarsForSeconds((int)raw * 3600, dropBar); break;
+      case MODE_DAYS:  barCount = BarsForSeconds((int)raw * 86400, dropBar); break;
      }
 
    int maxBars = Bars(Symbol(), Period());
-   if(maxBars > 0 && leftBar >= maxBars)
-      leftBar = maxBars - 1;
-   if(leftBar < 0)
-      leftBar = 0;
-   return(leftBar);
+   if(maxBars > 0 && dropBar + barCount >= maxBars)
+      barCount = maxBars - 1 - dropBar;
+   if(barCount < 1) barCount = 1;
+   return(barCount);
   }
 
 string UnitLabel()
@@ -153,42 +139,108 @@ string UnitLabel()
    return("candles");
   }
 
-//+------------------------------------------------------------------+
-//| OnStart() runs ONCE on drop.                                     |
-//+------------------------------------------------------------------+
+bool GetDropLocation(double &price, datetime &dropTime, int &dropBar)
+  {
+   price = WindowPriceOnDropped();
+   dropTime = WindowTimeOnDropped();
+
+   if(dropTime <= 0)
+     {
+      dropTime = iTime(Symbol(), Period(), 0);
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2): dropped outside chart area; using current bar time fallback.");
+     }
+
+   dropBar = iBarShift(Symbol(), Period(), dropTime, true);
+   if(dropBar == -1)
+      dropBar = iBarShift(Symbol(), Period(), dropTime, false);
+   if(dropBar == -1)
+      dropBar = 0;
+
+   if(price <= 0.0)
+     {
+      price = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+      if(price <= 0.0 && dropBar >= 0)
+         price = iClose(Symbol(), Period(), dropBar);
+     }
+
+   if(price <= 0.0)
+     {
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2): invalid price at drop location, aborting.");
+      return(false);
+     }
+
+   int maxBars = Bars(Symbol(), Period());
+   if(dropBar < 0 || dropBar >= maxBars)
+     {
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2): invalid drop bar index ", dropBar, ", aborting.");
+      return(false);
+     }
+
+   return(true);
+  }
+
+int OnInit()
+  {
+   int cur = CurrentCounter();
+   Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2) attached. Current throw count = ", cur,
+         " (next drop length = ", BaseLength, " ", UnitLabel(),
+         " x", (cur + 1), " throws x", ScaleMultiplier, ")");
+   return(INIT_SUCCEEDED);
+  }
+
+void OnDeinit(const int reason)
+  {
+   if(ResetOnRemove && reason == REASON_REMOVE)
+     {
+      int cur = CurrentCounter();
+      ResetCounter();
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2) removed. Counter reset (was ", cur, "). Next attach will start at 1.");
+     }
+   else
+     {
+      int cur = CurrentCounter();
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2) deinit (reason=", reason, "). Counter preserved = ", cur);
+     }
+  }
+
 void OnStart()
   {
-   if(ChartID() == 0)
+   if(ChartID() == 0) return;
+
+   double price;
+   datetime dropTime;
+   int dropBar;
+   if(!GetDropLocation(price, dropTime, dropBar))
       return;
 
-   //--- Step 1: drop price
-   double price = WindowPriceOnDropped();
-   if(price == 0.0)
-      price = SymbolInfoDouble(Symbol(), SYMBOL_BID);
-
-   //--- Step 2: color by Bid position (rule #7)
    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
-   color  lineColor = (price >= bid) ? ColorBelow : ColorAbove;
+   if(bid <= 0.0) bid = price;
 
-   //--- Step 3: length with v1.1 Multiplier + LengthMode
-   int leftBar    = ComputeLeftBar();
-   int rightBar   = 0;
-   int throwCount = (int)GlobalVariableGet(GvCounterName());
+   color lineColor = (price >= bid) ? ColorAbove : ColorBelow;
+   int throwCount = GetNextCounter();
+   int barCount   = ComputeBarCount(dropBar, throwCount);
+   int leftBar    = dropBar + barCount;
+   int rightBar   = dropBar;
 
-   //--- Step 4: unique name (rule #11)
-   string name = MakeName();
+   int maxBars = Bars(Symbol(), Period());
+   if(leftBar >= maxBars)
+      leftBar = maxBars - 1;
 
-   //--- Step 5: OBJ_TREND, two equal-price points (rule #10)
-   if(!ObjectCreate(ChartID(), name, OBJ_TREND,
-                    0,
-                    iTime(Symbol(), Period(), leftBar),  price,
-                    iTime(Symbol(), Period(), rightBar), price))
+   if(leftBar <= rightBar)
      {
-      Print("QL_Bold2: failed to create object '", name, "'. Error=", GetLastError());
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2): not enough history to create a line of the requested length.");
       return;
      }
 
-   //--- Step 6: visual properties from inputs (rule #8)
+   string name = MakeName(throwCount);
+   if(!ObjectCreate(ChartID(), name, OBJ_TREND, 0,
+                    iTime(Symbol(), Period(), leftBar), price,
+                    iTime(Symbol(), Period(), rightBar), price))
+     {
+      Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2): failed to create object '", name, "'. Error=", GetLastError());
+      return;
+     }
+
    ObjectSetInteger(ChartID(), name, OBJPROP_COLOR,      lineColor);
    ObjectSetInteger(ChartID(), name, OBJPROP_STYLE,      STYLE);
    ObjectSetInteger(ChartID(), name, OBJPROP_WIDTH,      WIDTH);
@@ -200,12 +252,9 @@ void OnStart()
 
    ChartRedraw(ChartID());
 
-   Print("QL_Bold2 placed @ ", DoubleToString(price, Digits),
-         " | span=", leftBar, " bars (", BaseLength, " ", UnitLabel(),
+   Print("QL_Bold2 - Minor Support/Resistance line (Solid, Width 2) placed @ ", DoubleToString(price, Digits),
+         " | dropBar=", dropBar, " | span=", barCount, " bars (", BaseLength, " ", UnitLabel(),
          " x", throwCount, " throws x", ScaleMultiplier, ")",
-         " | color=", (price >= bid ? "Below" : "Above"));
+         " | color=", (price >= bid ? "Above" : "Below"));
   }
-//+------------------------------------------------------------------+
-//| Spec compliance summary: same engine, only STYLE/WIDTH/colors.   |
-//| v1.1 adds ScaleMultiplier and LengthMode.                        |
 //+------------------------------------------------------------------+
